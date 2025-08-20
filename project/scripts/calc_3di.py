@@ -7,31 +7,29 @@ import pandas as pd
 import torch
 from Bio.SeqUtils import seq1
 
-# --- MODIFICA 1: Import robusti ---
+# Robust imports
 from Bio.PDB import FastMMCIFParser, PDBParser, is_aa
-# Lo script viene importato ma viene trovato tramite PYTHONPATH
+# This module is resolved via PYTHONPATH
 import foldseek_extract_pdb_features
 
 
 # 50 letters (X/x are missing)
 LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWYZabcdefghijklmnopqrstuvwyz'
 
-# --- MODIFICA 2: Gestione robusta dei percorsi ---
-# Troviamo il percorso alla cartella che contiene tutti gli strumenti (es. classification_ring)
-# Questo è più robusto di un percorso hardcoded.
-# Si assume che questo script sia in 'project/scripts' e i dati in 'project/classification_ring/3di_model'
+# Robust path handling:
+# Try to locate the 3Di model folder relative to this script.
+# Assumes this file lives in 'project/scripts' and models in 'project/classification_ring/3di_model'.
 _script_dir = str(PurePath(os.path.realpath(__file__)).parent)
-# Percorso corretto alla cartella del modello
 model_dir = os.path.abspath(os.path.join(_script_dir, '..', 'classification_ring', '3di_model'))
 if not os.path.isdir(model_dir):
-    # Se la struttura è diversa, logga un avviso ma continua
-    logging.warning(f"La cartella del modello 3di non è stata trovata in {model_dir}. Si tenterà con un percorso relativo.")
+    # If the layout is different, warn and fall back to a relative path.
+    logging.warning(f"3Di model folder not found at {model_dir}. Falling back to '3di_model' relative path.")
     model_dir = '3di_model'
 
 
 def encoder_features(residues, virt_cb=(270, 0, 2), full_backbone=True):
     """
-    Calculate 3D descriptors for each residue of a PDB file.
+    Compute 3D descriptors for each residue in a structure.
     """
     coords, valid_mask = foldseek_extract_pdb_features.get_atom_coordinates(residues, full_backbone=full_backbone)
     coords = foldseek_extract_pdb_features.move_CB(coords, virt_cb=virt_cb)
@@ -47,11 +45,10 @@ def discretize(centroids, x):
 
 def arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('pdb_file', help='mmCIF or PDB file')
+    parser.add_argument('pdb_file', help='Input structure file (.mmCIF or .PDB)')
     parser.add_argument('-out_dir', '--out_dir', help='Output directory', default='.')
-    # --- MODIFICA 3: Aggiunto conf_file fittizio per robustezza ---
-    # Questo script non usa conf_file, ma lo accettiamo come argomento per non fallire se predict.py glielo passa.
-    parser.add_argument('-conf_file', '--conf_file', help='(Ignored) Configuration file.', default=None)
+    # Accept (but ignore) a conf_file for compatibility with external callers (e.g., predict.py)
+    parser.add_argument('-conf_file', '--conf_file', help='(Ignored) Configuration file placeholder.', default=None)
     return parser.parse_args()
 
 
@@ -59,7 +56,7 @@ if __name__ == '__main__':
 
     args = arg_parser()
 
-    # Setup del logger
+    # Logger setup
     logFormatter = logging.Formatter("%(asctime)s [%(levelname)-5.5s] %(message)s")
     rootLogger = logging.getLogger()
     if not rootLogger.hasHandlers():
@@ -70,35 +67,39 @@ if __name__ == '__main__':
 
     # Start
     pdb_id = Path(args.pdb_file).stem
-    logging.info("{} 3Di processing".format(pdb_id))
+    logging.info(f"{pdb_id} 3Di processing")
 
     # Load model parameters
     try:
-        # --- MODIFICA 4: Correzione per la compatibilità di PyTorch ---
+        # Torch compatibility: allow full object load (older checkpoints)
         encoder = torch.load(os.path.join(model_dir, 'encoder.pt'), weights_only=False)
         centroids = np.loadtxt(os.path.join(model_dir, 'states.txt'))
         encoder.eval()
     except FileNotFoundError as e:
-        logging.error(f"Errore nel caricamento del modello 3Di: {e}. Controlla che il percorso '{model_dir}' sia corretto.")
+        logging.error(f"Error loading 3Di model: {e}. Check that the path '{model_dir}' is correct.")
         raise
 
-    # --- MODIFICA 5: Scelta dinamica del parser PDB/mmCIF ---
+    # Select appropriate parser based on file extension
     if args.pdb_file.lower().endswith(('.cif', '.mmcif')):
         parser = FastMMCIFParser(QUIET=True)
     elif args.pdb_file.lower().endswith('.pdb'):
         parser = PDBParser(QUIET=True)
     else:
-        raise ValueError(f"Formato file non supportato: {args.pdb_file}. Deve essere .pdb, .cif, o .mmcif.")
+        raise ValueError(f"Unsupported file format: {args.pdb_file}. Expected .pdb, .cif, or .mmcif.")
     
     structure = parser.get_structure(pdb_id, args.pdb_file)
 
     data = []
-    # Usiamo un approccio che itera direttamente sui residui validi
-    all_valid_residues = { (res.get_parent().id, res.id): res for model in structure for chain in model for res in chain if is_aa(res) }
+    # Iterate over valid amino-acid residues only
+    all_valid_residues = {(res.get_parent().id, res.id): res
+                          for model in structure
+                          for chain in model
+                          for res in chain if is_aa(res)}
 
     for chain in structure[0]:
-        # Prendi i residui della catena corrente che sono anche validi globalmente
-        residues = [res for res in chain.get_residues() if (res.get_parent().id, res.id) in all_valid_residues]
+        # Keep residues that are valid at the global structure scope
+        residues = [res for res in chain.get_residues()
+                    if (res.get_parent().id, res.id) in all_valid_residues]
         
         if not residues:
             continue
@@ -106,7 +107,7 @@ if __name__ == '__main__':
         feat, mask = encoder_features(residues)
         res_features = feat[mask]
         
-        # Filtra i residui che non hanno feature calcolabili
+        # Skip chains where no features can be computed
         valid_residues = [res for i, res in enumerate(residues) if mask[i]]
         if not valid_residues:
             continue
@@ -118,19 +119,22 @@ if __name__ == '__main__':
 
         for i, state in enumerate(valid_states):
             current_residue = valid_residues[i]
-            data.append((pdb_id, chain.id, *current_residue.id[1:], seq1(current_residue.get_resname()), state, LETTERS[state]))
+            data.append((pdb_id, chain.id,
+                         *current_residue.id[1:],  # (resi, ins)
+                         seq1(current_residue.get_resname()),
+                         state, LETTERS[state]))
     
     if not data:
-        logging.warning(f"{pdb_id}: non è stato possibile calcolare le feature 3Di per nessun residuo.")
-        # Crea comunque un file vuoto per non far fallire la pipeline
+        logging.warning(f"{pdb_id}: could not compute 3Di features for any residue.")
+        # Write an empty file to keep downstream steps from failing
         df = pd.DataFrame(columns=['pdb_id', 'ch', 'resi', 'ins', 'resn', '3di_state', '3di_letter'])
     else:
-        # Crea un DataFrame e salva su file
+        # Build DataFrame and save
         df = pd.DataFrame(data, columns=['pdb_id', 'ch', 'resi', 'ins', 'resn', '3di_state', '3di_letter'])
 
-    # --- MODIFICA 6: Creazione sicura della directory di output ---
+    # Ensure output directory exists and write TSV
     os.makedirs(args.out_dir, exist_ok=True)
     output_path = os.path.join(args.out_dir, f"{pdb_id}.tsv")
     df.to_csv(output_path, sep="\t", index=False)
 
-    logging.info(f"File 3Di salvato in: {output_path}")
+    logging.info(f"3Di file written to: {output_path}")

@@ -2,50 +2,38 @@ import pandas as pd
 import glob
 import os
 
-# --- INIZIO CONFIGURAZIONE ---
-
-# 1. Definisci il percorso della cartella dove si trovano TUTTI i tuoi file di training.
+# Folder containing all the training files (.tsv).
 training_data_folder = '/content/project/features_ring'
 
-# 2. Definisci come vuoi chiamare il file finale che conterrà tutti i dati uniti.
-output_filename = 'training_dataset_completo.tsv'
+# Name of the final file that will contain the merged dataset.
+output_filename = 'complete_training_dataset.tsv'
 
-# --- FINE CONFIGURAZIONE ---
-
-
-# 3. Trova tutti i file nella cartella di training.
-#    L'asterisco `*` è un carattere jolly. `*.tsv` cerca tutti i file che finiscono con `.tsv`.
-#    Se i tuoi file avessero un'altra estensione, ad esempio .txt, dovresti scrivere '*.txt'.
+# Find all files in the training folder.
 search_path = os.path.join(training_data_folder, "*.tsv") # Crea il percorso di ricerca corretto
 all_files = glob.glob(search_path)
 
 if not all_files:
-    print(f"ERRORE: Nessun file .tsv è stato trovato nella cartella '{training_data_folder}'.")
-    print("Controlla che il percorso sia corretto e che i file siano presenti.")
+    print(f"ERROR: No .tsv files were found in '{training_data_folder}'.")
+    print("Check that the path is correct and the files are present.")
 else:
-    print(f"Trovati {len(all_files)} file. Inizio la procedura di unione...")
+    print(f"Found {len(all_files)} files. Starting merge...")
 
-    # 4. Crea una lista vuota dove metteremo ogni file dopo averlo letto.
+    # Create a list to collect each file after reading it.
     dataframe_list = []
     
-    # 5. Itera su ogni file trovato.
     for file_path in all_files:
-        # Leggi il singolo file .tsv in un DataFrame di pandas.
+        
         df = pd.read_csv(file_path, sep='\t')
-        # Aggiungi il DataFrame appena letto alla nostra lista.
+        # Add the DataFrame to the list.
         dataframe_list.append(df)
 
-    # 6. Concatena (unisci) tutti i DataFrame presenti nella lista in un unico DataFrame.
-    #    `ignore_index=True` resetta l'indice del nuovo DataFrame da 0 fino alla fine.
-    print("Unione dei file in corso... (potrebbe richiedere un po' di tempo)")
+    # Concatenate (merge) all DataFrames into a single one.
+    print("Merging files...")
     combined_df = pd.concat(dataframe_list, ignore_index=True)
 
-    # 7. Salva il DataFrame finale in un nuovo file .tsv.
-    #    `index=False` è fondamentale per evitare di scrivere una colonna di indice extra nel file.
-    print(f"Salvataggio del dataset unito nel file '{output_filename}'...")
+    # Save the final DataFrame to a new .tsv file.
+    print(f"Saving merged dataset to '{output_filename}'...")
     combined_df.to_csv(output_filename, sep='\t', index=False)
 
-    print("\n--- Operazione Completata! ---")
-    print(f"File '{output_filename}' creato con successo.")
-    print(f"Dimensioni del dataset combinato: {combined_df.shape[0]} righe, {combined_df.shape[1]} colonne.")
-    print("\nOra puoi usare questo file per il Passo 3 (addestrare il modello di machine learning).")
+    print(f"File '{output_filename}' created successfully.")
+    print(f"Combined dataset size: {combined_df.shape[0]} rows, {combined_df.shape[1]} columns.")
